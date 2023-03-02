@@ -1,0 +1,220 @@
+---
+title: 'Datos de Carpobrotus edulis en NaturalistaUY'
+format: 
+  html:
+    toc: true
+    toc-location: right
+    smooth-scroll: true
+    html-math-method: katex
+    code-fold: true
+self-contained: true
+editor: source
+author: 'Florencia Grattarola'
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+---
+
+## Descarga de datos de *Carpobrotus edulis*
+
+Para descargar datos de NaturalistaUY usé la [API de iNaturalist](https://api.inaturalist.org/v1/docs/). Los datos se descargan considerando:
+
+  - Uruguay como localización: `place_id=7259`
+  - Carpobrotus edulis como taxón: `taxon_id=49322`
+  - Registros con Grado de Investigación: `quality_grade=research`
+
+```{r}
+#| message: false
+#| label: datos-api
+#| code-fold: false
+
+library(httr)
+library(jsonlite)
+library(tidyverse)
+
+get_observations <- function(place_id, taxon_id, quality_grade){
+    
+  call <- str_glue('https://api.inaturalist.org/v1/observations?place_id={place_id}&taxon_id={taxon_id}&per_page=200&quality_grade={quality_grade}')
+  
+  get_json_call <- GET(url = call) %>%
+      content(as = "text") %>% fromJSON(flatten = TRUE)
+  
+  if (!is.null(get_json_call)) {
+      results <- as_tibble(get_json_call$results)
+      results <- results %>% 
+      select(taxon.name, taxon.rank, identifications_count, observed_on, 
+                  geojson.coordinates, positional_accuracy,
+                  user.login, user.id, user.name, user.observations_count,
+                  user.identifications_count, user.activity_count, 
+                  license_code, num_identification_agreements) %>%
+      unnest_wider(geojson.coordinates, names_sep = "_") %>%
+      rename(longitude=geojson.coordinates_1, latitude=geojson.coordinates_2)
+    }
+  return(results)
+}
+
+datos_carpobrotus <- get_observations(place_id=7259,
+                                      taxon_id=49322,
+                                      quality_grade='research')
+
+```
+
+## Análisis preliminar
+
+Este es un resumen inicial de los datos disponibles al día de hoy `r format(Sys.time(), '%Y-%m-%d')`.
+
+### Mapas
+
+Para descargar los mapas usé el paquete `geouy`, haciendo: `geouy::load_geouy('Dptos')`. Guardé este objeto para evitar descargarlo nuevamente. El archivo tiene como CRS `EPSG:32721`.
+
+```{r}
+#| label: mapa
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+library(lubridate)
+library(geonames)
+options(geonamesUsername="biodiversidata") # A (free) username is required and rate limits exist
+library(tmap)
+tmap_mode("view")
+library(sf)
+sf::sf_use_s2(FALSE)
+# options
+options(scipen = 999)
+
+uruguay <- readRDS('../data/Uruguay.rds')
+deptos_costeros <- c('MONTEVIDEO','MALDONADO','CANELONES', 'ROCHA')
+costa_uruguay <- uruguay %>% filter(nombre %in% deptos_costeros)
+
+getStateProvince <- function(lat, lng){
+  subdivision <- try(GNcountrySubdivision(lat, lng, radius = "1", maxRows = 1), silent = TRUE)
+  if(class(subdivision)=='try-error'){
+    subdivision$adminName1 <- NA
+  }
+  else if (length(subdivision$adminName1)==0){
+    subdivision$adminName1 <- NA
+  }
+  return(subdivision$adminName1)
+}
+
+datos_carpobrotus<- datos_carpobrotus %>%
+  mutate(stateProvince=map2_chr(latitude, longitude, getStateProvince)) %>% 
+  mutate(observed_on=as_date(observed_on)) %>% 
+  mutate(season=lubridate::quarter(observed_on)) %>% 
+  mutate(season=ifelse(season==1, 'verano', 
+                       ifelse(season==2, 'otoño', 
+                              ifelse(season==3, 'invierno', 'primavera'))))
+
+saveRDS(datos_carpobrotus, '../data/datos_carpobrotus.rds')
+
+sf_carpobrotus <- datos_carpobrotus %>% 
+    st_as_sf(coords = c("longitude", "latitude")) %>% 
+    st_set_crs(4326) %>% 
+    st_transform(32721)
+
+mapa.carpobrotus <- tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay) +
+    tm_fill(col='grey90') +
+    tm_borders(col='grey60', alpha = 0.4) +
+    tm_shape(sf_carpobrotus) +
+    tm_dots(alpha = 0.4)  
+
+mapa.carpobrotus
+```
+
+### Más Detalles
+
+Un total de **`r length(unique(datos_carpobrotus$user.id))`** usuaries llevan hechos **`r nrow(datos_carpobrotus)`** registros de *Carpobrotus edulis*. El primer registro es de `r datos_carpobrotus %>% select(observed_on) %>% arrange(observed_on) %>% head(n=1)` y el último es de `r datos_carpobrotus %>% select(observed_on) %>% arrange(observed_on) %>% tail(n=1)`.
+
+
+  - Datos por departamento
+
+```{r}
+#| label: departmentos
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+library(knitr)
+
+datos_carpobrotus %>% 
+  group_by(stateProvince) %>%
+  count() %>%  rename(Departamento=stateProvince, 
+                                     `Cantidad de registros`=n) %>% 
+  kable()
+```
+
+  - Número de registros por grilla (10x10km)
+  
+```{r}
+#| label: grillas
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+costa_uruguay_grillas <- st_make_grid(st_union(costa_uruguay), 10000) %>%
+  st_intersection(st_union(costa_uruguay)) %>% 
+  st_sf(gridID=1:length(.), geometry= .) %>% 
+  st_cast() %>% st_make_valid() 
+
+grillas_carpobrotus <- st_join(costa_uruguay_grillas, sf_carpobrotus) %>% 
+  group_by(gridID) %>% 
+  summarise(NR=ifelse(n_distinct(taxon.name, na.rm=T)!=0, n(), 0)) %>% 
+  st_cast()
+
+ggplot() +
+    geom_sf(data=grillas_carpobrotus %>% mutate(NR=ifelse(NR==0, NA, NR)),
+            aes(fill=NR)) +
+    scale_fill_fermenter(palette ='YlGn', direction = 1,
+                         breaks = c(0,1, 5,10,15,20,25), na.value="#ede8e8") + 
+    geom_sf(data=costa_uruguay, fill=NA) +
+    labs(fill='Número de\nregistros') +
+    theme_bw()
+
+```
+
+  - Estacionalidad
+  
+```{r}
+#| label: estaciones
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+library(patchwork)
+
+timeline.plot <- datos_carpobrotus %>% 
+    add_count(taxon.name, year=year(observed_on), 
+              name='records_per_year') %>% 
+    ggplot(., aes(x=observed_on, y=records_per_year)) +
+    geom_line(show.legend = FALSE, size=1) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+    theme_bw()+
+    labs(x='', y= 'Número de registros por año')
+
+  
+season.year.plot <- datos_carpobrotus %>% 
+    add_count(taxon.name, season, name='records_per_season') %>% 
+    mutate(season=factor(season, 
+                         levels = c('verano', 'otoño', 'invierno', 'primavera'))) %>%
+    ggplot(aes(x=season, y=observed_on)) +  
+    geom_boxplot(aes(fill = season), show.legend = FALSE) +
+    theme_bw() +
+    labs(x='', y= 'Fecha')
+
+season.n.plot <- datos_carpobrotus %>% 
+    add_count(taxon.name, season, name='records_per_season') %>% 
+    mutate(season=factor(season, 
+                         levels = c('verano', 'otoño', 'invierno', 'primavera'))) %>% 
+    ggplot(aes(x=season, y=records_per_season)) +  
+    geom_segment(aes(x=season, xend=season, y=0, 
+                     yend=records_per_season, col=season), show.legend = FALSE) +
+    geom_point(aes(col=season), show.legend = FALSE) +
+    theme_bw() +
+    labs(x='', y= 'Número de registros por estación')
+
+timeline.plot / (season.year.plot | season.n.plot)
+```
+
