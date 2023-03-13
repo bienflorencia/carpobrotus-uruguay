@@ -30,7 +30,7 @@ library(httr)
 library(jsonlite)
 library(tidyverse)
 
-get_observations <- function(place_id, taxon_id, quality_grade){
+getCarpobrotusObservations <- function(place_id, taxon_id, quality_grade){
     
   call <- str_glue('https://api.inaturalist.org/v1/observations?place_id={place_id}&taxon_id={taxon_id}&per_page=200&quality_grade={quality_grade}')
   
@@ -51,8 +51,8 @@ get_observations <- function(place_id, taxon_id, quality_grade){
   return(results)
 }
 
-datos_carpobrotus <- get_observations(place_id=7259,
-                                      taxon_id=49322,
+datos_carpobrotus <- getCarpobrotusObservations(place_id=7259,
+                                                taxon_id=49322,
                                       quality_grade='research')
 
 ```
@@ -88,6 +88,7 @@ costa_uruguay <- uruguay %>% filter(nombre %in% deptos_costeros)
 
 getStateProvince <- function(lat, lng){
   subdivision <- try(GNcountrySubdivision(lat, lng, radius = "1", maxRows = 1), silent = TRUE)
+  Sys.sleep(1.0)
   if(class(subdivision)=='try-error'){
     subdivision$adminName1 <- NA
   }
@@ -105,7 +106,7 @@ datos_carpobrotus<- datos_carpobrotus %>%
                        ifelse(season==2, 'otoño', 
                               ifelse(season==3, 'invierno', 'primavera'))))
 
-saveRDS(datos_carpobrotus, '../data/datos_carpobrotus.rds')
+# saveRDS(datos_carpobrotus, '../data/datos_carpobrotus.rds')
 
 sf_carpobrotus <- datos_carpobrotus %>% 
     st_as_sf(coords = c("longitude", "latitude")) %>% 
@@ -144,36 +145,6 @@ datos_carpobrotus %>%
   kable()
 ```
 
-  - Número de registros por grilla (10x10km)
-  
-```{r}
-#| label: grillas
-#| echo: true
-#| eval: true
-#| message: false
-#| warning: false
-
-costa_uruguay_grillas <- st_make_grid(st_union(costa_uruguay), 10000) %>%
-  st_intersection(st_union(costa_uruguay)) %>% 
-  st_sf(gridID=1:length(.), geometry= .) %>% 
-  st_cast() %>% st_make_valid() 
-
-grillas_carpobrotus <- st_join(costa_uruguay_grillas, sf_carpobrotus) %>% 
-  group_by(gridID) %>% 
-  summarise(NR=ifelse(n_distinct(taxon.name, na.rm=T)!=0, n(), 0)) %>% 
-  st_cast()
-
-ggplot() +
-    geom_sf(data=grillas_carpobrotus %>% mutate(NR=ifelse(NR==0, NA, NR)),
-            aes(fill=NR)) +
-    scale_fill_fermenter(palette ='YlGn', direction = 1,
-                         breaks = c(0,1, 5,10,15,20,25), na.value="#ede8e8") + 
-    geom_sf(data=costa_uruguay, fill=NA) +
-    labs(fill='Número de\nregistros') +
-    theme_bw()
-
-```
-
   - Estacionalidad
   
 ```{r}
@@ -182,6 +153,7 @@ ggplot() +
 #| eval: true
 #| message: false
 #| warning: false
+#| fig-height: 8
 
 library(patchwork)
 
@@ -200,7 +172,8 @@ season.year.plot <- datos_carpobrotus %>%
     mutate(season=factor(season, 
                          levels = c('verano', 'otoño', 'invierno', 'primavera'))) %>%
     ggplot(aes(x=season, y=observed_on)) +  
-    geom_boxplot(aes(fill = season), show.legend = FALSE) +
+    geom_jitter(aes(col = season), width = 0.01, show.legend = FALSE) + 
+    stat_summary(fun = mean, fun.min = min, fun.max = max) +
     theme_bw() +
     labs(x='', y= 'Fecha')
 
@@ -213,8 +186,346 @@ season.n.plot <- datos_carpobrotus %>%
                      yend=records_per_season, col=season), show.legend = FALSE) +
     geom_point(aes(col=season), show.legend = FALSE) +
     theme_bw() +
-    labs(x='', y= 'Número de registros por estación')
+    labs(x='', y= 'Número de registros')
 
 timeline.plot / (season.year.plot | season.n.plot)
 ```
 
+## Descarga de todos los datos para Montevideo, Canelones, Maldonado y Rocha
+
+En este caso usamos:
+
+  - Montevideo, Canelones, Maldonado y Rocha como localización: `place_id=12416`, `place_id=12410`, `place_id=12415`, `place_id=12420`
+  - Que no sean de organismos cultivados/captivos: `captive=false`
+  - Que tengan`geoprivacy=open`
+  
+La API sugiere mantener *60 requests per minute* (1 solicitud x 1 segundo), así que para descargar estos datos tenemos que generar una pausa en el código para no saturar a la API (`delay=1.0`). Además, vamos a dividir el resultado en 200 resultados por página (`per_page=200`). 
+
+:::{.callout-note}
+## Problema
+
+De esta manera sólo podemos descargar hasta 10,000 observaciones. Tengo que buscarle la vuelta para controlar el `id_above` cuando se llega a 10 mil y hacer una nueva llamada con ese id. Ver [API Recommended Practices](https://www.naturalista.uy/pages/api+recommended+practices)
+:::
+
+```{r}
+#| label: api-download
+#| echo: true
+#| eval: false
+#| message: false
+#| warning: false
+
+getAllObservations <- function(place_id){
+  
+  total_results = NULL
+  page = 1 
+  delay = 1.0
+  results = tibble()
+  
+  while(is.null(total_results) || nrow(results) < total_results) {
+    
+    call_url <- str_glue('https://api.inaturalist.org/v1/observations?',
+                         'place_id={place_id}',
+                         '&captive=false&geoprivacy=open',
+                         '&per_page=200&page={page}')
+    get_json_call <- GET(url = call_url) %>% 
+      content(as = "text") %>% fromJSON(flatten = TRUE)
+    
+    if (!is.null(get_json_call)) {
+      if (is.null(total_results)) {
+        total_results = get_json_call$total_results
+      }
+      results_i <- as_tibble(get_json_call$results) %>% 
+        select(taxon.name, taxon.rank, identifications_count, observed_on, 
+               geojson.coordinates, positional_accuracy,
+               user.login, user.id, user.name, user.observations_count,
+               user.identifications_count, user.activity_count, 
+               license_code, num_identification_agreements) %>%
+        unnest_wider(geojson.coordinates, names_sep = "_") %>%
+        rename(longitude=geojson.coordinates_1, latitude=geojson.coordinates_2)
+      results <- rbind(results, results_i)
+      page <- page + 1
+      Sys.sleep(delay)
+    }
+  }
+  return(results)
+}
+
+# place_id
+montevideo_place_id=12416
+canelones_place_id=12410 
+maldonado_place_id=12415
+rocha_place_id=12420
+
+montevideoObservations <- getAllObservations(montevideo_place_id)
+canelonesObservations <- getAllObservations(canelones_place_id)
+maldonadoObservations <- getAllObservations(maldonado_place_id)
+rochaObservations <- getAllObservations(rocha_place_id)
+
+allObservations <- bind_rows(montevideoObservations, 
+                             canelonesObservations,
+                             maldonadoObservations,
+                             rochaObservations)
+
+# saveRDS(allObservations, '../data/allObservations.rds')
+```
+
+
+Por ahora vamos a descargar los datos directamente de [naturalista.uy/observations/export](https://www.naturalista.uy/observations/export).
+
+::: {.callout-tip}
+## Descarga de datos
+
+Hecha el 12 de marzo, 2023.
+:::
+
+
+```{r}
+#| label: all.data
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+allObservations <- read_csv('../data/observations-303864.csv', guess_max = 72000)
+
+allObservations <- allObservations %>% 
+  filter(coordinates_obscured==FALSE & !is.na(taxon_species_name)) %>% 
+  select(kingdom=taxon_kingdom_name, phylum=taxon_phylum_name, 
+         class=taxon_class_name, order=taxon_order_name,
+         family=taxon_family_name, genus=taxon_genus_name, 
+         species=taxon_species_name, scientific_name,
+         quality_grade, observed_on, user_login, user_id,
+         state_province=place_admin1_name, 
+         longitude, latitude)
+
+allObservations_sf <- allObservations %>% 
+    st_as_sf(coords = c("longitude", "latitude")) %>% 
+    st_set_crs(4326) %>% 
+    st_transform(32721)
+```
+
+
+## Análisis espacial
+
+  - Creación de grillas para los cuatro departamentos de la costa (10x10km)
+  
+```{r}
+#| label: grillas
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+costa_uruguay_grillas <- st_make_grid(st_union(costa_uruguay), 10000) %>%
+  st_intersection(st_union(costa_uruguay)) %>% 
+  st_sf(gridID=1:length(.), geometry= .) %>% 
+  st_make_valid() %>% st_cast() 
+```
+
+### Intersección de grillas con datos totales y para *Caprobrotus edulis*  
+
+```{r}
+#| label: join-grillas
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+grillas_allObservations <- st_join(costa_uruguay_grillas,
+                                   allObservations_sf) %>% 
+  group_by(gridID) %>% 
+  summarise(NR=ifelse(n_distinct(species, na.rm=T)!=0, n(), 0),
+            SR=n_distinct(species, na.rm = T),
+            spsList = paste(species, collapse = ';')) %>% 
+  st_cast()
+
+grillas_carpobrotus <- st_join(costa_uruguay_grillas, sf_carpobrotus) %>% 
+  group_by(gridID) %>% 
+  summarise(NR=ifelse(n_distinct(taxon.name, na.rm=T)!=0, n(), 0)) %>% 
+  st_cast()
+
+```
+
+### Estimación del esfuerzo de muestreo por grilla
+
+Usamos la función `get_gridsSlopes()` generada para análisis de Biodiversidata ([Grattarola et al. 2020](https://doi.org/10.1038/s41598-020-79074-8)). 
+
+::: {.callout-note collapse="true"}
+## Más info sobre este análisis
+
+El código está disponible en GitHub: [Multiple forms of hotspots of tetrapod biodiversity and the challenges of open-access data scarcity](https://github.com/bienflorencia/Multiple-forms-of-hotspots-of-tetrapod-biodiversity/blob/22bf5de985ba25267efa64fd308574547437e566/R/04_identification_of_areas_of_ignorance.R).
+
+> To identify the areas of ignorance we quantified the levels of inventory incompleteness for each group by using curvilinearity of smoothed species accumulation curves (SACs). This method assumes that SACs of poorly sampled grids tend towards a straight line, while those of better sampled ones have a higher degree of curvature. As a proxy for inventory incompleteness we calculated the degree of curvilinearity as the mean slope of the last 10% of SACs.
+
+:::
+
+
+```{r}
+#| label: sampling-effort-per-grid-cell
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+# The function ```get_gridsSlopes``` finds a species accumulation curve (SAC) for each grid-cell using the method ‘exact’ of the function ```specaccum``` of the vegan package and then calculates the degree of curvilinearity as the mean slope of the last 10% of the curve. 
+
+library(vegan)
+library(spaa)
+
+get_gridsSlopes <- function(data_abundance){
+  gridSlope <- data.frame(gridID=integer(), slope=numeric(), stringsAsFactors=FALSE)
+  data_abundance <- as.data.frame(data_abundance) 
+  data_abundance$abundance <- as.integer(1)
+  cells <- unique(data_abundance$gridID)
+  splistT <- list()
+  spaccum <- list()
+  slope <- list()
+  for (i in cells) {
+    splist <- data_abundance[data_abundance$gridID == i,c(2:4)]
+    splistT[[i]] = data2mat(splist) 
+    spaccum[[i]] = specaccum(splistT[[i]], method = "exact")
+    slope[[i]] = (spaccum[[i]][[4]][length(spaccum[[i]][[4]])]-
+                    spaccum[[i]][[4]][ceiling(length(spaccum[[i]][[4]])*0.9)])/
+      (length(spaccum[[i]][[4]])- ceiling(length(spaccum[[i]][[4]])*0.9))
+    gridSlope_i <- data.frame(gridID=i, slope=slope[[i]], stringsAsFactors=FALSE)
+    gridSlope <- rbind(gridSlope, gridSlope_i) 
+  }
+  gridSlope <- gridSlope %>% as_tibble() %>% 
+    mutate(slope=ifelse(is.nan(slope), NA, slope))
+  return(gridSlope)
+}
+
+allObservations.SACs <- grillas_allObservations %>% as_tibble() %>% 
+    mutate(species=str_split(spsList, ';')) %>% 
+    unnest(species) %>% 
+    group_by(spsList) %>% mutate(sample = row_number()) %>% 
+    ungroup() %>% 
+    mutate(sample=ifelse(is.na(species), 0 , sample)) %>% 
+    select(gridID, sample, species)
+
+allObservations.incompleteness <- get_gridsSlopes(allObservations.SACs)
+```
+
+Unión espacial de todas los datos por grilla: número de registros totales, número de especies totales, curva de incompleteness (esfuerzo de muestreo), y número de registros de *Carpobrotus edulis*.
+  
+```{r}
+#| label: union-espacial-grillas
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+costa_uruguay.incompleteness <- left_join(grillas_allObservations,
+          allObservations.incompleteness) %>%
+  left_join(., grillas_carpobrotus %>% 
+              rename(carpobrotus=NR) %>% 
+              st_drop_geometry())
+```
+
+### Figuras
+
+  - Mapas
+  
+```{r}
+#| label: incompleteness-plots
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+#| fig-height: 10
+
+registros.carpobrotus <- ggplot() +
+    geom_sf(data=costa_uruguay.incompleteness %>% 
+                mutate(carpobrotus=ifelse(carpobrotus==0, NA, carpobrotus)),
+            aes(fill=carpobrotus)) +
+    scale_fill_fermenter(palette ='YlGn', direction = 1,
+                         breaks = c(0,1, 5,10,15,20,25), 
+                         na.value="#ede8e8") + 
+    geom_sf(data=costa_uruguay, fill=NA) +
+    labs(fill='Número de\nregistros\nCarpobrotus') +
+    theme_bw()
+
+n.registros <- ggplot() +
+    geom_sf(data=costa_uruguay.incompleteness %>% 
+              mutate(NR=ifelse(NR==0, NA, NR)),
+            aes(fill=NR)) +
+    scale_fill_fermenter(palette ='YlGn', 
+                         direction = 1, 
+                         breaks = c(0, 100, 500, 750, 1000, 1500), 
+                         na.value="#ede8e8") + 
+    geom_sf(data=costa_uruguay, fill=NA) +
+    labs(fill='Número de\nregistros\nTotales') +
+    theme_bw()
+
+sac <- ggplot() +
+    geom_sf(data=costa_uruguay.incompleteness, aes(fill=slope)) +
+    scale_fill_fermenter(palette ='Spectral', na.value="#ede8e8") + 
+    geom_sf(data=costa_uruguay, fill=NA) +
+    labs(fill='Incompleteness') +
+    theme_bw()
+  
+registros.carpobrotus/ n.registros / sac
+```
+
+  - Correlaciones
+
+```{r}
+#| label: correlaciones
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+#| fig-height: 8
+
+library(ggpubr)
+
+tabla.final <- costa_uruguay.incompleteness %>% 
+    st_drop_geometry() %>% 
+    #mutate(slope=ifelse(is.na(slope), 0, slope)) %>% 
+    select(grilla=gridID, NR, SR, carpobrotus, slope)
+
+lm.nr <- summary(lm(carpobrotus ~ NR, data=tabla.final))
+
+nr.caprobrotus <- ggplot(tabla.final, aes(x=NR, y=carpobrotus)) +
+    geom_jitter() + 
+    geom_smooth(method = 'lm') + 
+    stat_regline_equation(label.y = 20, aes(label = ..eq.label..)) +
+    stat_regline_equation(label.y = 15, aes(label = ..rr.label..)) +
+    labs(x='Cantidad de registros totales', y='Registros de Caprobrotus') +
+    theme_bw()
+
+lm.sac <- summary(lm(carpobrotus ~ slope, data=tabla.final))
+
+incompleteness.caprobrotus <- ggplot(tabla.final, 
+       aes(x=slope, y=carpobrotus)) +
+    geom_point() + geom_smooth(method = 'lm') + 
+    stat_regline_equation(label.y = 20, label.x = 0.85, aes(label = ..eq.label..)) +
+    stat_regline_equation(label.y = 15, label.x = 0.85, aes(label = ..rr.label..)) +
+    labs(x='Incompleteness', y='Registros de Caprobrotus') +
+    theme_bw()
+
+nr.caprobrotus / incompleteness.caprobrotus
+```
+  
+### Tabla
+
+La tabla final de datos con información por grilla:  
+  - **Núm de registros totales**: cantidad de registros en NaturalistaUY de cualquier especie  
+  - **Núm de especies totales**: cantidad de especies en NaturalistaUY    
+  - **Núm de registros Carpobrotus**: cantidad de registros en NaturalistaUY de *Carpobrotus edulis*  
+  - **Incompleteness**: medida de esfuerzo de muestreo (valores cercanos a 0 indican grillas completas)  
+
+```{r}
+#| label: tabla-final
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+tabla.final %>% 
+  select(`Núm de registros totales`=NR,
+         `Núm de especies`=SR,
+         `Núm de registros Carpobrotus`=carpobrotus, 
+         Incompleteness=slope) %>% 
+  kable(digits = 3)
+```
