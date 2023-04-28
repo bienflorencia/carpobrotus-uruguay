@@ -44,7 +44,7 @@ getCarpobrotusObservations <- function(place_id, taxon_id, quality_grade){
                   geojson.coordinates, positional_accuracy,
                   user.login, user.id, user.name, user.observations_count,
                   user.identifications_count, user.activity_count, 
-                  license_code, num_identification_agreements) %>%
+                  license_code, num_identification_agreements, uri) %>%
       unnest_wider(geojson.coordinates, names_sep = "_") %>%
       rename(longitude=geojson.coordinates_1, latitude=geojson.coordinates_2)
     }
@@ -106,7 +106,8 @@ datos_carpobrotus<- datos_carpobrotus %>%
                        ifelse(season==2, 'otoño', 
                               ifelse(season==3, 'invierno', 'primavera'))))
 
-# saveRDS(datos_carpobrotus, '../data/datos_carpobrotus.rds')
+saveRDS(datos_carpobrotus, '../data/datos_carpobrotus.rds')
+write_csv(datos_carpobrotus, '../data/datos_carpobrotus.csv', na = '')
 
 sf_carpobrotus <- datos_carpobrotus %>% 
     st_as_sf(coords = c("longitude", "latitude")) %>% 
