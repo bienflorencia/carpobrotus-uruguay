@@ -107,7 +107,7 @@ datos_carpobrotus<- datos_carpobrotus %>%
                               ifelse(season==3, 'invierno', 'primavera'))))
 
 saveRDS(datos_carpobrotus, '../data/datos_carpobrotus.rds')
-write_csv(datos_carpobrotus, '../data/datos_carpobrotus.csv', na = '')
+write_excel_csv(datos_carpobrotus, '../data/datos_carpobrotus.csv', na = '')
 
 sf_carpobrotus <- datos_carpobrotus %>% 
     st_as_sf(coords = c("longitude", "latitude")) %>% 
