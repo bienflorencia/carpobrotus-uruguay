@@ -1,8 +1,8 @@
 # Carpobrotus edulis en Uruguay
-Datos, código y análisis de registros de *Carpobrotus edulis* en NaturalistaUY, por Gabriel Laufer, Florencia Grattarola, Lucía Rodríguez-Tricot y Matías Zarucki.
 
-La descarga de datos, está automatizada a través de la API de iNat.
+*Gabriel Laufer, Florencia Grattarola, Lucía Rodríguez-Tricot & Matías Zarucki*.
 
+Este repositorio contiene datos, código y análisis de registros de *Carpobrotus edulis* en NaturalistaUY. La descarga de datos, está automatizada a través de la API de iNat.
 
 
 ![](docs/Carpobrotus_edulis.jpeg)
