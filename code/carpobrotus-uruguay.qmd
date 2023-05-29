@@ -82,7 +82,7 @@ sf::sf_use_s2(FALSE)
 # options
 options(scipen = 999)
 
-uruguay <- readRDS('../data/Uruguay.rds')
+uruguay <- readRDS('data/Uruguay.rds')
 deptos_costeros <- c('MONTEVIDEO','MALDONADO','CANELONES', 'ROCHA')
 costa_uruguay <- uruguay %>% filter(nombre %in% deptos_costeros)
 
@@ -106,8 +106,8 @@ datos_carpobrotus<- datos_carpobrotus %>%
                        ifelse(season==2, 'otoño', 
                               ifelse(season==3, 'invierno', 'primavera'))))
 
-saveRDS(datos_carpobrotus, '../data/datos_carpobrotus.rds')
-write_excel_csv(datos_carpobrotus, '../data/datos_carpobrotus.csv', na = '')
+saveRDS(datos_carpobrotus, 'data/datos_carpobrotus.rds')
+write_excel_csv(datos_carpobrotus, 'data/datos_carpobrotus.csv', na = '')
 
 sf_carpobrotus <- datos_carpobrotus %>% 
     st_as_sf(coords = c("longitude", "latitude")) %>% 
@@ -167,6 +167,15 @@ timeline.plot <- datos_carpobrotus %>%
     theme_bw()+
     labs(x='', y= 'Número de registros por año')
 
+timeline.plot <- datos_carpobrotus %>% 
+    add_count(taxon.name, year=year(observed_on), 
+              name='records_per_year') %>% 
+    ggplot(., aes(x=observed_on, y=records_per_year)) +
+    geom_line(show.legend = FALSE, size=1) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+    theme_bw()+
+    labs(x='', y= 'Number of records per year')
+
   
 season.year.plot <- datos_carpobrotus %>% 
     add_count(taxon.name, season, name='records_per_season') %>% 
@@ -190,6 +199,9 @@ season.n.plot <- datos_carpobrotus %>%
     labs(x='', y= 'Número de registros')
 
 timeline.plot / (season.year.plot | season.n.plot)
+
+ggsave(plot = timeline.plot, filename='figs/timeline.plot.svg', device = 'svg', width=6, height=3, dpi=300)
+
 ```
 
 ## Descarga de todos los datos para Montevideo, Canelones, Maldonado y Rocha
@@ -267,7 +279,7 @@ allObservations <- bind_rows(montevideoObservations,
                              maldonadoObservations,
                              rochaObservations)
 
-# saveRDS(allObservations, '../data/allObservations.rds')
+# saveRDS(allObservations, 'data/allObservations.rds')
 ```
 
 
@@ -287,7 +299,7 @@ Hecha el 12 de marzo, 2023.
 #| message: false
 #| warning: false
 
-allObservations <- read_csv('../data/observations-303864.csv', guess_max = 72000)
+allObservations <- read_csv('data/observations-303864.csv', guess_max = 72000)
 
 allObservations <- allObservations %>% 
   filter(coordinates_obscured==FALSE & !is.na(taxon_species_name)) %>% 
@@ -443,7 +455,7 @@ registros.carpobrotus <- ggplot() +
                          breaks = c(0,1, 5,10,15,20,25), 
                          na.value="#ede8e8") + 
     geom_sf(data=costa_uruguay, fill=NA) +
-    labs(fill='Número de\nregistros\nCarpobrotus') +
+    labs(fill='Number of\nCarpobrotus records') +
     theme_bw()
 
 n.registros <- ggplot() +
@@ -455,7 +467,7 @@ n.registros <- ggplot() +
                          breaks = c(0, 100, 500, 750, 1000, 1500), 
                          na.value="#ede8e8") + 
     geom_sf(data=costa_uruguay, fill=NA) +
-    labs(fill='Número de\nregistros\nTotales') +
+    labs(fill='Total\nnumber of\nrecords') +
     theme_bw()
 
 sac <- ggplot() +
@@ -482,27 +494,27 @@ library(ggpubr)
 
 tabla.final <- costa_uruguay.incompleteness %>% 
     st_drop_geometry() %>% 
-    #mutate(slope=ifelse(is.na(slope), 0, slope)) %>% 
     select(grilla=gridID, NR, SR, carpobrotus, slope)
 
-lm.nr <- summary(lm(carpobrotus ~ NR, data=tabla.final))
+summary(lm(carpobrotus ~ NR, data=tabla.final)) 
 
-nr.caprobrotus <- ggplot(tabla.final, aes(x=NR, y=carpobrotus)) +
+nr.caprobrotus <- tabla.final %>% filter(carpobrotus>0) %>% 
+    ggplot(aes(x=NR, y=carpobrotus)) +
     geom_jitter() + 
     geom_smooth(method = 'lm') + 
-    stat_regline_equation(label.y = 20, aes(label = ..eq.label..)) +
-    stat_regline_equation(label.y = 15, aes(label = ..rr.label..)) +
-    labs(x='Cantidad de registros totales', y='Registros de Caprobrotus') +
+    stat_regline_equation(label.y = 30, aes(label = ..eq.label..)) +
+    stat_regline_equation(label.y = 28, aes(label = ..adj.rr.label..)) +
+    labs(x='Number of records per grid cell', y='Caprobrotus edulis records per grid cell') +
     theme_bw()
 
-lm.sac <- summary(lm(carpobrotus ~ slope, data=tabla.final))
+summary(lm(carpobrotus ~ slope, data=tabla.final)) 
 
-incompleteness.caprobrotus <- ggplot(tabla.final, 
-       aes(x=slope, y=carpobrotus)) +
+incompleteness.caprobrotus <- tabla.final %>% filter(carpobrotus>0) %>% 
+    ggplot(aes(x=slope, y=carpobrotus)) +
     geom_point() + geom_smooth(method = 'lm') + 
-    stat_regline_equation(label.y = 20, label.x = 0.85, aes(label = ..eq.label..)) +
-    stat_regline_equation(label.y = 15, label.x = 0.85, aes(label = ..rr.label..)) +
-    labs(x='Incompleteness', y='Registros de Caprobrotus') +
+    stat_regline_equation(label.y = 30, label.x = 0.65, aes(label = ..eq.label..)) +
+    stat_regline_equation(label.y = 28, label.x = 0.65, aes(label = ..adj.rr.label..)) +
+    labs(x='Sampling incompleteness per grid cell', y='Caprobrotus edulis records per grid cell') +
     theme_bw()
 
 nr.caprobrotus / incompleteness.caprobrotus
@@ -523,10 +535,24 @@ La tabla final de datos con información por grilla:
 #| message: false
 #| warning: false
 
-tabla.final %>% 
+tabla.final %>% filter(carpobrotus>0) %>% arrange(slope) %>% 
   select(`Núm de registros totales`=NR,
          `Núm de especies`=SR,
          `Núm de registros Carpobrotus`=carpobrotus, 
          Incompleteness=slope) %>% 
   kable(digits = 3)
+
+tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay) +
+    tm_fill(col='grey90') +
+    tm_borders(col='grey60', alpha = 0.4) +
+    tm_shape(costa_uruguay.incompleteness %>% select(grilla=gridID, NR, SR, carpobrotus, slope)) +
+    tm_fill(col = 'slope', palette = 'Spectral', n = 6, style='jenks')  
+
+tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay) +
+    tm_fill(col='grey90') +
+    tm_borders(col='grey60', alpha = 0.4) +
+    tm_shape(costa_uruguay.incompleteness %>% select(grilla=gridID, NR, SR, carpobrotus, slope)) +
+    tm_fill(col = 'carpobrotus', palette = 'Greens', n = 6, style='jenks') 
 ```
