@@ -31,37 +31,62 @@ library(jsonlite)
 library(tidyverse)
 
 getCarpobrotusObservations <- function(place_id, taxon_id, quality_grade){
+
+  total_results = NULL
+  page = 1 
+  delay = 1.0
+  results = tibble()
+  
+  while(is.null(total_results) || nrow(results) < total_results) {
     
-  call <- str_glue('https://api.inaturalist.org/v1/observations?place_id={place_id}&taxon_id={taxon_id}&per_page=200&quality_grade={quality_grade}')
-  
-  get_json_call <- GET(url = call) %>%
+    call_url <- str_glue('https://api.inaturalist.org/v1/observations?',
+                         'place_id={place_id}&taxon_id={taxon_id}',
+                         '&captive=false&geoprivacy=open',
+                         '&quality_grade={quality_grade}',
+                         '&per_page=200&page={page}')
+    
+    get_json_call <- GET(url = call_url) %>% 
       content(as = "text") %>% fromJSON(flatten = TRUE)
-  
-  if (!is.null(get_json_call)) {
-      results <- as_tibble(get_json_call$results)
-      results <- results %>% 
-      select(taxon.name, taxon.rank, identifications_count, observed_on, 
-                  geojson.coordinates, positional_accuracy,
-                  user.login, user.id, user.name, user.observations_count,
-                  user.identifications_count, user.activity_count, 
-                  license_code, num_identification_agreements, uri) %>%
-      unnest_wider(geojson.coordinates, names_sep = "_") %>%
-      rename(longitude=geojson.coordinates_1, latitude=geojson.coordinates_2)
+    
+    if (!is.null(get_json_call)) {
+      if (is.null(total_results)) {
+        total_results <- get_json_call$total_results # number of results of the call
+      }
+      results_i <- as_tibble(get_json_call$results) %>% 
+        select(taxon.name, taxon.rank, identifications_count, 
+               created_at, observed_on, 
+               geojson.coordinates, positional_accuracy,
+               user.login, user.id, user.name, user.observations_count,
+               user.identifications_count, user.activity_count, 
+               license_code, num_identification_agreements, uri) %>%
+        unnest_wider(geojson.coordinates, names_sep = "_") %>%
+        rename(longitude=geojson.coordinates_1, latitude=geojson.coordinates_2)
+      results <- rbind(results, results_i)
+      page <- page + 1
+      Sys.sleep(delay)
     }
+  }
   return(results)
 }
-
+  
 datos_carpobrotus <- getCarpobrotusObservations(place_id=7259,
                                                 taxon_id=49322,
                                       quality_grade='research')
 
+datos_carpobrotus <- datos_carpobrotus %>% filter(created_at<='2023-06-09')
 ```
 
-## Análisis preliminar
+::: {.callout-note}
+## Fecha de descarga
 
-Este es un resumen inicial de los datos disponibles al día de hoy `r format(Sys.time(), '%Y-%m-%d')`.
+9 de junio, 2023
+:::
 
-### Mapas
+## Análisis espacial y temporal
+
+Resumen de los datos de *Carpobrotus edulis* disponibles.
+
+### Distribución espacial
 
 Para descargar los mapas usé el paquete `geouy`, haciendo: `geouy::load_geouy('Dptos')`. Guardé este objeto para evitar descargarlo nuevamente. El archivo tiene como CRS `EPSG:32721`.
 
@@ -98,8 +123,12 @@ getStateProvince <- function(lat, lng){
   return(subdivision$adminName1)
 }
 
+# departamento de registro
 datos_carpobrotus<- datos_carpobrotus %>%
-  mutate(stateProvince=map2_chr(latitude, longitude, getStateProvince)) %>% 
+  mutate(stateProvince=map2_chr(latitude, longitude, getStateProvince)) 
+
+# estación del año
+datos_carpobrotus<- datos_carpobrotus %>% 
   mutate(observed_on=as_date(observed_on)) %>% 
   mutate(season=lubridate::quarter(observed_on)) %>% 
   mutate(season=ifelse(season==1, 'verano', 
@@ -124,12 +153,8 @@ mapa.carpobrotus <- tm_graticules(alpha = 0.3) +
 mapa.carpobrotus
 ```
 
-### Más Detalles
 
-Un total de **`r length(unique(datos_carpobrotus$user.id))`** usuaries llevan hechos **`r nrow(datos_carpobrotus)`** registros de *Carpobrotus edulis*. El primer registro es de `r datos_carpobrotus %>% select(observed_on) %>% arrange(observed_on) %>% head(n=1)` y el último es de `r datos_carpobrotus %>% select(observed_on) %>% arrange(observed_on) %>% tail(n=1)`.
-
-
-  - Datos por departamento
+#### Datos por departamento
 
 ```{r}
 #| label: departmentos
@@ -145,6 +170,45 @@ datos_carpobrotus %>%
                                      `Cantidad de registros`=n) %>% 
   kable()
 ```
+
+#### Datos en Áreas Protegidas
+
+```{r}
+#| label: areasprotegidas
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+
+areas_protegidas <- readRDS('data/areas_protegidas.rds')
+localidades <- readRDS('data/localidades.rds')
+
+AP_en_la_costa <- st_intersection(areas_protegidas, costa_uruguay) %>% st_drop_geometry %>% select(nombre) %>% pull
+
+areas_protegidas <- areas_protegidas %>% 
+  filter(nombre %in% AP_en_la_costa)
+
+carpobrotus_areas_protegidas <- st_join(areas_protegidas,
+                                   sf_carpobrotus) %>% 
+  group_by(id, nombre) %>% 
+  summarise(NR=ifelse(n_distinct(taxon.name, na.rm=T)!=0, n(), 0),
+            presence=ifelse(NR>0, 1, 0)) %>% 
+  st_cast()
+
+mapa.carpobrotus.areas_protegidas <- tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay) +
+    tm_fill(col='grey90') +
+    tm_borders(col='grey60', alpha = 0.4) +
+    tm_shape(carpobrotus_areas_protegidas) +
+    tm_fill('presence', alpha = 0.4, style = 'cat', palette = 'Set1')  
+
+mapa.carpobrotus.areas_protegidas
+```
+  
+### Cobertura temporal
+
+Un total de **`r length(unique(datos_carpobrotus$user.id))`** usuaries tomaron **`r nrow(datos_carpobrotus)`** registros de *Carpobrotus edulis*. El primer registro es de `r datos_carpobrotus %>% select(observed_on) %>% arrange(observed_on) %>% head(n=1)` y el último es de `r datos_carpobrotus %>% select(observed_on) %>% arrange(observed_on) %>% tail(n=1)`.
+
 
   - Estacionalidad
   
@@ -204,93 +268,72 @@ ggsave(plot = timeline.plot, filename='figs/timeline.plot.svg', device = 'svg', 
 
 ```
 
-## Descarga de todos los datos para Montevideo, Canelones, Maldonado y Rocha
+## Análisis de las fotografías de *Carpobrotus edulis*
 
-En este caso usamos:
+  - **Densidad**: high, medium, low
+  - **Fenología**: no evidence of flowering/fruiting, flowering, flower budding , fruiting, flowering/flower budding, flowering/fruiting 
+  - **Presencia de infraestructura humana**: present, absent
+  
+```{r}
+#| label: photo-analysis
+#| message: false
+#| warning: false
+
+photo_evaluation <- read_csv('data/photo_evalutaion.csv')
+
+photo_evaluation_carpobrotus <- left_join(datos_carpobrotus, 
+                                          photo_evaluation %>% select(uri, density, phenology, infrastructure)) %>% 
+  mutate(density = case_when(density=='alta'|density=='alta/media' ~ 'high',
+                             density=='media'|density=='media/alta' ~ 'medium',
+                             density=='baja' ~ 'low')) %>% 
+  mutate(phenology=ifelse(phenology=='No evidence of flowering', 'no evidence of flowering/fruiting', phenology)) %>% 
+  mutate(infrastructure = case_when(infrastructure==0 ~ 'absent',
+                                    infrastructure==1 ~ 'present',
+                                    is.na(infrastructure) ~ 'not assessed'))
+
+photo_evaluation_carpobrotus %>% 
+  group_by(density) %>% 
+  summarise(count = n()) %>% 
+  mutate(freq = scales::label_percent()(count / sum(count))) %>% 
+  arrange(desc(count)) %>%
+  rename(Density=density, N=count, `%`=freq) %>%
+  kable()
+
+photo_evaluation_carpobrotus %>% 
+  group_by(phenology) %>% 
+  summarise(count = n()) %>% 
+  mutate(freq = scales::label_percent()(count / sum(count))) %>% 
+  arrange(desc(count)) %>%
+  rename(Phenology=phenology, N=count, `%`=freq) %>%
+  kable()
+
+photo_evaluation_carpobrotus %>% 
+  group_by(infrastructure) %>% 
+  summarise(count = n()) %>% 
+  mutate(freq = scales::label_percent()(count / sum(count))) %>% 
+  arrange(desc(count)) %>%
+  rename(Infrastructure=infrastructure, N=count, `%`=freq) %>% 
+  kable()
+
+```
+
+
+
+## Descarga de todos los datos en NaturalistaUY para Montevideo, Canelones, Maldonado y Rocha
+
+Usamos:
 
   - Montevideo, Canelones, Maldonado y Rocha como localización: `place_id=12416`, `place_id=12410`, `place_id=12415`, `place_id=12420`
   - Que no sean de organismos cultivados/captivos: `captive=false`
   - Que tengan`geoprivacy=open`
-  
-La API sugiere mantener *60 requests per minute* (1 solicitud x 1 segundo), así que para descargar estos datos tenemos que generar una pausa en el código para no saturar a la API (`delay=1.0`). Además, vamos a dividir el resultado en 200 resultados por página (`per_page=200`). 
 
-:::{.callout-note}
-## Problema
+Estos datos los descargamos directamente de [naturalista.uy/observations/export](https://www.naturalista.uy/observations/export).
 
-De esta manera sólo podemos descargar hasta 10,000 observaciones. Tengo que buscarle la vuelta para controlar el `id_above` cuando se llega a 10 mil y hacer una nueva llamada con ese id. Ver [API Recommended Practices](https://www.naturalista.uy/pages/api+recommended+practices)
+::: {.callout-note}
+## Fecha de descarga
+
+9 de junio, 2023
 :::
-
-```{r}
-#| label: api-download
-#| echo: true
-#| eval: false
-#| message: false
-#| warning: false
-
-getAllObservations <- function(place_id){
-  
-  total_results = NULL
-  page = 1 
-  delay = 1.0
-  results = tibble()
-  
-  while(is.null(total_results) || nrow(results) < total_results) {
-    
-    call_url <- str_glue('https://api.inaturalist.org/v1/observations?',
-                         'place_id={place_id}',
-                         '&captive=false&geoprivacy=open',
-                         '&per_page=200&page={page}')
-    get_json_call <- GET(url = call_url) %>% 
-      content(as = "text") %>% fromJSON(flatten = TRUE)
-    
-    if (!is.null(get_json_call)) {
-      if (is.null(total_results)) {
-        total_results = get_json_call$total_results
-      }
-      results_i <- as_tibble(get_json_call$results) %>% 
-        select(taxon.name, taxon.rank, identifications_count, observed_on, 
-               geojson.coordinates, positional_accuracy,
-               user.login, user.id, user.name, user.observations_count,
-               user.identifications_count, user.activity_count, 
-               license_code, num_identification_agreements) %>%
-        unnest_wider(geojson.coordinates, names_sep = "_") %>%
-        rename(longitude=geojson.coordinates_1, latitude=geojson.coordinates_2)
-      results <- rbind(results, results_i)
-      page <- page + 1
-      Sys.sleep(delay)
-    }
-  }
-  return(results)
-}
-
-# place_id
-montevideo_place_id=12416
-canelones_place_id=12410 
-maldonado_place_id=12415
-rocha_place_id=12420
-
-montevideoObservations <- getAllObservations(montevideo_place_id)
-canelonesObservations <- getAllObservations(canelones_place_id)
-maldonadoObservations <- getAllObservations(maldonado_place_id)
-rochaObservations <- getAllObservations(rocha_place_id)
-
-allObservations <- bind_rows(montevideoObservations, 
-                             canelonesObservations,
-                             maldonadoObservations,
-                             rochaObservations)
-
-# saveRDS(allObservations, 'data/allObservations.rds')
-```
-
-
-Por ahora vamos a descargar los datos directamente de [naturalista.uy/observations/export](https://www.naturalista.uy/observations/export).
-
-::: {.callout-tip}
-## Descarga de datos
-
-Hecha el 12 de marzo, 2023.
-:::
-
 
 ```{r}
 #| label: all.data
@@ -299,10 +342,12 @@ Hecha el 12 de marzo, 2023.
 #| message: false
 #| warning: false
 
-allObservations <- read_csv('data/observations-303864.csv', guess_max = 72000)
+allObservations <- read_csv('data/observations-334644.csv', guess_max = 72000)
 
 allObservations <- allObservations %>% 
-  filter(coordinates_obscured==FALSE & !is.na(taxon_species_name)) %>% 
+  filter(coordinates_obscured==FALSE & 
+           !is.na(taxon_species_name) & 
+           captive_cultivated == FALSE) %>% 
   select(kingdom=taxon_kingdom_name, phylum=taxon_phylum_name, 
          class=taxon_class_name, order=taxon_order_name,
          family=taxon_family_name, genus=taxon_genus_name, 
@@ -435,9 +480,9 @@ costa_uruguay.incompleteness <- left_join(grillas_allObservations,
               st_drop_geometry())
 ```
 
-### Figuras
+### Sesgos de muestreo
 
-  - Mapas
+#### Mapas
   
 ```{r}
 #| label: incompleteness-plots
@@ -452,7 +497,7 @@ registros.carpobrotus <- ggplot() +
                 mutate(carpobrotus=ifelse(carpobrotus==0, NA, carpobrotus)),
             aes(fill=carpobrotus)) +
     scale_fill_fermenter(palette ='YlGn', direction = 1,
-                         breaks = c(0,1, 5,10,15,20,25), 
+                         #breaks = c(0,1, 5,10,15,20,25), 
                          na.value="#ede8e8") + 
     geom_sf(data=costa_uruguay, fill=NA) +
     labs(fill='Number of\nCarpobrotus records') +
@@ -464,7 +509,7 @@ n.registros <- ggplot() +
             aes(fill=NR)) +
     scale_fill_fermenter(palette ='YlGn', 
                          direction = 1, 
-                         breaks = c(0, 100, 500, 750, 1000, 1500), 
+                         #breaks = c(0, 100, 500, 750, 1000, 1500), 
                          na.value="#ede8e8") + 
     geom_sf(data=costa_uruguay, fill=NA) +
     labs(fill='Total\nnumber of\nrecords') +
@@ -472,15 +517,32 @@ n.registros <- ggplot() +
 
 sac <- ggplot() +
     geom_sf(data=costa_uruguay.incompleteness, aes(fill=slope)) +
-    scale_fill_fermenter(palette ='Spectral', na.value="#ede8e8") + 
+    scale_fill_fermenter(palette ='Spectral', 
+                         breaks = c(0.1, 0.25, 0.5, 0.75, 0.9, 1),
+                         na.value="#ede8e8") + 
     geom_sf(data=costa_uruguay, fill=NA) +
     labs(fill='Incompleteness') +
     theme_bw()
   
-registros.carpobrotus/ n.registros / sac
+n.registros / registros.carpobrotus / sac
+
+# interactivos
+tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay) +
+    tm_fill(col='grey90') +
+    tm_borders(col='grey60', alpha = 0.4) +
+    tm_shape(costa_uruguay.incompleteness %>% select(grilla=gridID, NR, SR, carpobrotus, slope)) +
+    tm_fill(col = 'slope', palette = 'Spectral', n = 6, style='jenks')  
+
+tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay) +
+    tm_fill(col='grey90') +
+    tm_borders(col='grey60', alpha = 0.4) +
+    tm_shape(costa_uruguay.incompleteness %>% select(grilla=gridID, NR, SR, carpobrotus, slope)) +
+    tm_fill(col = 'carpobrotus', palette = 'Greens', n = 6, style='jenks') 
 ```
 
-  - Correlaciones
+#### Correlaciones
 
 ```{r}
 #| label: correlaciones
@@ -520,7 +582,7 @@ incompleteness.caprobrotus <- tabla.final %>% filter(carpobrotus>0) %>%
 nr.caprobrotus / incompleteness.caprobrotus
 ```
   
-### Tabla
+### Tabla final
 
 La tabla final de datos con información por grilla:  
   - **Núm de registros totales**: cantidad de registros en NaturalistaUY de cualquier especie  
@@ -541,18 +603,4 @@ tabla.final %>% filter(carpobrotus>0) %>% arrange(slope) %>%
          `Núm de registros Carpobrotus`=carpobrotus, 
          Incompleteness=slope) %>% 
   kable(digits = 3)
-
-tm_graticules(alpha = 0.3) +
-    tm_shape(costa_uruguay) +
-    tm_fill(col='grey90') +
-    tm_borders(col='grey60', alpha = 0.4) +
-    tm_shape(costa_uruguay.incompleteness %>% select(grilla=gridID, NR, SR, carpobrotus, slope)) +
-    tm_fill(col = 'slope', palette = 'Spectral', n = 6, style='jenks')  
-
-tm_graticules(alpha = 0.3) +
-    tm_shape(costa_uruguay) +
-    tm_fill(col='grey90') +
-    tm_borders(col='grey60', alpha = 0.4) +
-    tm_shape(costa_uruguay.incompleteness %>% select(grilla=gridID, NR, SR, carpobrotus, slope)) +
-    tm_fill(col = 'carpobrotus', palette = 'Greens', n = 6, style='jenks') 
 ```
