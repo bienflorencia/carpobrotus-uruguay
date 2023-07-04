@@ -156,6 +156,15 @@ sf_carpobrotus <- datos_carpobrotus %>%
     st_set_crs(4326) %>% 
     st_transform(32721)
 
+
+tm_graticules(alpha = 0.3) +
+    tm_shape(areas_protegidas_costa) +
+    tm_fill('darkgreen', alpha = 0.4) +
+    tm_shape(localidades_costa %>% filter(AREA>5000000)) +
+    tm_fill(col='blue', alpha = 0.4) +
+    tm_shape(sf_carpobrotus) +
+    tm_dots(alpha = 0.4)
+
 mapa.carpobrotus <- tm_graticules(alpha = 0.3) +
     tm_shape(uruguay, bbox = costa_entera_uruguay) +
     tm_fill(col='grey97') +
@@ -171,7 +180,6 @@ mapa.carpobrotus <- tm_graticules(alpha = 0.3) +
     tm_dots(alpha = 0.4) + 
     tm_layout(scale = 2)
 
-mapa.carpobrotus
 tmap_save(mapa.carpobrotus, 'figs/mapa.carpobrotus.svg')
 ```
 
