@@ -110,6 +110,14 @@ options(scipen = 999)
 uruguay <- readRDS('data/Uruguay.rds')
 deptos_costeros <- c('MONTEVIDEO','MALDONADO','CANELONES', 'ROCHA')
 costa_uruguay <- uruguay %>% filter(nombre %in% deptos_costeros)
+costa_entera_uruguay <- uruguay %>% filter(nombre %in% c(deptos_costeros, 'SAN JOSÉ'))
+localidades <- readRDS('data/localidades.RDS')
+localidades_costa <- localidades %>% filter(NOMBDEPTO %in% deptos_costeros)
+areas_protegidas <- read_sf('data/areas_protegidas/c397Polygon.shp',  options = 'ENCODING=WINDOWS-1252') %>% 
+  st_transform(32721) %>% st_cast()
+areas_protegidas_costa <- areas_protegidas %>% 
+  filter(nombre %in%  c('Cerro Verde', 'Cabo Polonio', 'Laguna de Rocha', 'Laguna Garzón', 'Isla de Flores', 'Humedales del Santa Lucla'))
+
 
 getStateProvince <- function(lat, lng){
   subdivision <- try(GNcountrySubdivision(lat, lng, radius = "1", maxRows = 1), silent = TRUE)
@@ -126,6 +134,11 @@ getStateProvince <- function(lat, lng){
 # departamento de registro
 datos_carpobrotus<- datos_carpobrotus %>%
   mutate(stateProvince=map2_chr(latitude, longitude, getStateProvince)) 
+
+datos_carpobrotus <- datos_carpobrotus %>% 
+  mutate(stateProvince =case_when(stateProvince=='Rocha Department' ~ 'Rocha',
+                                  stateProvince=='Montevideo Department' ~ 'Montevideo',
+                                  TRUE ~ stateProvince))
 
 # estación del año
 datos_carpobrotus<- datos_carpobrotus %>% 
@@ -144,13 +157,22 @@ sf_carpobrotus <- datos_carpobrotus %>%
     st_transform(32721)
 
 mapa.carpobrotus <- tm_graticules(alpha = 0.3) +
+    tm_shape(uruguay, bbox = costa_entera_uruguay) +
+    tm_fill(col='grey97') +
+    tm_borders(col='grey80', alpha = 0.4) +
     tm_shape(costa_uruguay) +
     tm_fill(col='grey90') +
     tm_borders(col='grey60', alpha = 0.4) +
+    tm_shape(areas_protegidas_costa) +
+    tm_fill('darkgreen', alpha = 0.4) +
+    tm_shape(localidades_costa %>% filter(AREA>5000000)) +
+    tm_fill(col='blue', alpha = 0.4) +
     tm_shape(sf_carpobrotus) +
-    tm_dots(alpha = 0.4)  
+    tm_dots(alpha = 0.4) + 
+    tm_layout(scale = 2)
 
 mapa.carpobrotus
+tmap_save(mapa.carpobrotus, 'figs/mapa.carpobrotus.svg')
 ```
 
 
@@ -180,22 +202,17 @@ datos_carpobrotus %>%
 #| message: false
 #| warning: false
 
-areas_protegidas <- readRDS('data/areas_protegidas.rds')
-localidades <- readRDS('data/localidades.rds')
-
-AP_en_la_costa <- st_intersection(areas_protegidas, costa_uruguay) %>% st_drop_geometry %>% select(nombre) %>% pull
-
-areas_protegidas <- areas_protegidas %>% 
-  filter(nombre %in% AP_en_la_costa)
-
-carpobrotus_areas_protegidas <- st_join(areas_protegidas,
+carpobrotus_areas_protegidas <- st_join(areas_protegidas_costa,
                                    sf_carpobrotus) %>% 
   group_by(id, nombre) %>% 
   summarise(NR=ifelse(n_distinct(taxon.name, na.rm=T)!=0, n(), 0),
             presence=ifelse(NR>0, 1, 0)) %>% 
   st_cast()
 
-mapa.carpobrotus.areas_protegidas <- tm_graticules(alpha = 0.3) +
+mapa.carpobrotus.areas_protegidas <-  tm_graticules(alpha = 0.3) +
+    tm_shape(uruguay, bbox = costa_entera_uruguay) +
+    tm_fill(col='grey97') +
+    tm_borders(col='grey80', alpha = 0.4) +
     tm_shape(costa_uruguay) +
     tm_fill(col='grey90') +
     tm_borders(col='grey60', alpha = 0.4) +
@@ -264,8 +281,7 @@ season.n.plot <- datos_carpobrotus %>%
 
 timeline.plot / (season.year.plot | season.n.plot)
 
-ggsave(plot = timeline.plot, filename='figs/timeline.plot.svg', device = 'svg', width=6, height=3, dpi=300)
-
+ggsave(timeline.plot, filename='figs/timeline.plot.svg', device = 'svg', width=6, height=3, dpi=300)
 ```
 
 ## Análisis de las fotografías de *Carpobrotus edulis*
@@ -278,6 +294,7 @@ ggsave(plot = timeline.plot, filename='figs/timeline.plot.svg', device = 'svg', 
 #| label: photo-analysis
 #| message: false
 #| warning: false
+#| code-fold: false
 
 photo_evaluation <- read_csv('data/photo_evalutaion.csv')
 
@@ -285,11 +302,28 @@ photo_evaluation_carpobrotus <- left_join(datos_carpobrotus,
                                           photo_evaluation %>% select(uri, density, phenology, infrastructure)) %>% 
   mutate(density = case_when(density=='alta'|density=='alta/media' ~ 'high',
                              density=='media'|density=='media/alta' ~ 'medium',
-                             density=='baja' ~ 'low')) %>% 
-  mutate(phenology=ifelse(phenology=='No evidence of flowering', 'no evidence of flowering/fruiting', phenology)) %>% 
+                             density=='baja' ~ 'low',
+                             is.na(density) ~ 'not assessed')) %>% 
+  mutate(phenology=ifelse(phenology=='No evidence of flowering', 
+                          'no evidence of flowering/fruiting', phenology)) %>% 
   mutate(infrastructure = case_when(infrastructure==0 ~ 'absent',
                                     infrastructure==1 ~ 'present',
-                                    is.na(infrastructure) ~ 'not assessed'))
+                                    is.na(infrastructure) ~ 'not assessed')) %>%
+   mutate(density=fct_relevel(density, c('high', 'medium', 'low', 'not assessed')))
+
+sf_photo_evaluation_carpobrotus <- photo_evaluation_carpobrotus %>% 
+    st_as_sf(coords = c("longitude", "latitude")) %>% 
+    st_set_crs(4326) %>% 
+    st_transform(32721)
+
+```
+
+### Densidad
+
+```{r}
+#| label: photo-analysis-density
+#| message: false
+#| warning: false
 
 photo_evaluation_carpobrotus %>% 
   group_by(density) %>% 
@@ -299,6 +333,47 @@ photo_evaluation_carpobrotus %>%
   rename(Density=density, N=count, `%`=freq) %>%
   kable()
 
+tmap_mode("view")
+# interactivos
+
+tm_graticules(alpha = 0.3) +
+    tm_shape(localidades_costa %>% filter(AREA>5000000)) +
+    tm_fill(col='grey10', alpha = 0.4) +
+    tm_shape(sf_photo_evaluation_carpobrotus %>% 
+                 mutate(density=ifelse(density=='not assessed', NA, density))) +
+    tm_dots(col = 'density', title = 'Density',
+            palette = 'PRGn', showNA=F, labels=c('high', 'medium', 'low')) +
+    tm_shape(costa_uruguay) +
+    tm_borders(col='grey60', alpha = 0.4)
+
+
+# tmap_mode("plot")
+# density.plot <- tm_graticules(alpha = 0.3) +
+#     tm_shape(uruguay, bbox = costa_entera_uruguay) +
+#     tm_fill(col='grey97') +
+#     tm_borders(col='grey80', alpha = 0.4) +
+#     tm_shape(costa_uruguay) +
+#     tm_fill(col='grey90') +
+#     tm_borders(col='grey60', alpha = 0.4) +
+#     tm_shape(sf_photo_evaluation_carpobrotus %>% 
+#                mutate(density=ifelse(density=='not assessed', NA, density))) +
+#     tm_dots(col = 'density', title = 'Density',
+#             palette = 'PRGn', showNA=F, labels=c('high', 'medium', 'low')) +
+#     tm_shape(costa_uruguay) +
+#     tm_borders(col='grey60', alpha = 0.4) +
+#     tm_layout(scale = 2, legend.show = T, legend.position = c('left', 'top'))
+
+
+```
+
+
+### Fenología
+
+```{r}
+#| label: photo-analysis-phenology
+#| message: false
+#| warning: false
+
 photo_evaluation_carpobrotus %>% 
   group_by(phenology) %>% 
   summarise(count = n()) %>% 
@@ -307,6 +382,28 @@ photo_evaluation_carpobrotus %>%
   rename(Phenology=phenology, N=count, `%`=freq) %>%
   kable()
 
+photo_evaluation_carpobrotus %>% filter(!phenology %in% c('flower budding', 'flowering/fruiting' )) %>% 
+  add_count(phenology, month=(month(observed_on)), 
+            name='records_per_month') %>% 
+  ggplot(., aes(x=(month), #strftime(observed_on, format="%b"),
+                y=records_per_month,
+                col=phenology)) +
+  geom_line(size=2, show.legend = F) +
+  scale_color_brewer(palette='Set2') + scale_x_continuous(breaks= c(1,2,3,4,5,6,7,8,9,10,11,12))+
+  facet_wrap(~phenology, scales = 'free_y') +
+  theme_bw() +
+  labs(x='Months', y= 'Number of records')
+```
+
+
+
+### Infraestructura
+
+```{r}
+#| label: photo-analysis-infrastructure
+#| message: false
+#| warning: false
+
 photo_evaluation_carpobrotus %>% 
   group_by(infrastructure) %>% 
   summarise(count = n()) %>% 
@@ -314,6 +411,16 @@ photo_evaluation_carpobrotus %>%
   arrange(desc(count)) %>%
   rename(Infrastructure=infrastructure, N=count, `%`=freq) %>% 
   kable()
+
+tmap_mode("view")
+tm_graticules(alpha = 0.3) +
+    tm_shape(localidades_costa %>% filter(AREA>5000000)) +
+    tm_fill(col='grey10', alpha = 0.4) +
+    tm_shape(sf_photo_evaluation_carpobrotus) +
+    tm_dots(col = 'infrastructure', title = 'Infrastructure',
+            palette = 'Set1', labels=c('absent', 'present','not assessed')) +
+    tm_shape(costa_uruguay) +
+    tm_borders(col='grey60', alpha = 0.4)
 
 ```
 
@@ -327,7 +434,7 @@ Usamos:
   - Que no sean de organismos cultivados/captivos: `captive=false`
   - Que tengan`geoprivacy=open`
 
-Estos datos los descargamos directamente de [naturalista.uy/observations/export](https://www.naturalista.uy/observations/export).
+Dado que la API no permite descargar más de 10,0000 datos, estos datos los descargamos directamente de [naturalista.uy/observations/export](https://www.naturalista.uy/observations/export).
 
 ::: {.callout-note}
 ## Fecha de descarga
@@ -484,62 +591,115 @@ costa_uruguay.incompleteness <- left_join(grillas_allObservations,
 
 #### Mapas
   
+
 ```{r}
-#| label: incompleteness-plots
-#| echo: true
+#| label: incompleteness-plots-view
+#| echo: false
 #| eval: true
 #| message: false
 #| warning: false
 #| fig-height: 10
 
-registros.carpobrotus <- ggplot() +
-    geom_sf(data=costa_uruguay.incompleteness %>% 
-                mutate(carpobrotus=ifelse(carpobrotus==0, NA, carpobrotus)),
-            aes(fill=carpobrotus)) +
-    scale_fill_fermenter(palette ='YlGn', direction = 1,
-                         #breaks = c(0,1, 5,10,15,20,25), 
-                         na.value="#ede8e8") + 
-    geom_sf(data=costa_uruguay, fill=NA) +
-    labs(fill='Number of\nCarpobrotus records') +
-    theme_bw()
 
-n.registros <- ggplot() +
-    geom_sf(data=costa_uruguay.incompleteness %>% 
-              mutate(NR=ifelse(NR==0, NA, NR)),
-            aes(fill=NR)) +
-    scale_fill_fermenter(palette ='YlGn', 
-                         direction = 1, 
-                         #breaks = c(0, 100, 500, 750, 1000, 1500), 
-                         na.value="#ede8e8") + 
-    geom_sf(data=costa_uruguay, fill=NA) +
-    labs(fill='Total\nnumber of\nrecords') +
-    theme_bw()
-
-sac <- ggplot() +
-    geom_sf(data=costa_uruguay.incompleteness, aes(fill=slope)) +
-    scale_fill_fermenter(palette ='Spectral', 
-                         breaks = c(0.1, 0.25, 0.5, 0.75, 0.9, 1),
-                         na.value="#ede8e8") + 
-    geom_sf(data=costa_uruguay, fill=NA) +
-    labs(fill='Incompleteness') +
-    theme_bw()
-  
-n.registros / registros.carpobrotus / sac
-
+tmap_mode("view")
 # interactivos
-tm_graticules(alpha = 0.3) +
-    tm_shape(costa_uruguay) +
-    tm_fill(col='grey90') +
-    tm_borders(col='grey60', alpha = 0.4) +
-    tm_shape(costa_uruguay.incompleteness %>% select(grilla=gridID, NR, SR, carpobrotus, slope)) +
-    tm_fill(col = 'slope', palette = 'Spectral', n = 6, style='jenks')  
 
 tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay.incompleteness) +
+    tm_fill(col = 'slope', title = 'Incompleteness',
+            palette = '-RdYlBu', 
+            legend.reverse = T,
+            n = 5, style='jenks',
+            textNA = "No data",
+            colorNA = "grey80") +
     tm_shape(costa_uruguay) +
-    tm_fill(col='grey90') +
+    tm_borders(col='grey60', alpha = 0.4)
+
+tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay.incompleteness %>% 
+                 mutate(NR=ifelse(NR==0, NA, NR))) +
+    tm_fill(col = 'NR', title = 'Total number of records',
+            palette = 'RdPu', 
+            legend.reverse = T,
+            n = 6, style='jenks',
+            textNA = "0", 
+            colorNA = "grey80") +
+    tm_shape(costa_uruguay) +
+    tm_borders(col='grey60', alpha = 0.4)
+
+tm_graticules(alpha = 0.3) +
+    tm_shape(costa_uruguay.incompleteness %>% 
+                 mutate(carpobrotus=ifelse(carpobrotus==0, NA, carpobrotus))) +
+    tm_fill(col = 'carpobrotus', title = 'Number of C. edulis records',
+            palette = 'Greens', 
+            legend.reverse = T,
+            n = 6, style='jenks',
+            textNA = "0", 
+            colorNA = "grey80") +
+    tm_shape(costa_uruguay) +
+    tm_borders(col='grey60', alpha = 0.4)
+
+```
+
+```{r}
+#| label: incompleteness-plots-save
+#| echo: false
+#| eval: true
+#| message: false
+#| warning: false
+#| fig-height: 10
+
+tmap_mode("plot")
+sac.tmap <- tm_graticules(alpha = 0.3) +
+    tm_shape(uruguay, bbox = costa_entera_uruguay) +
+    tm_fill(col='grey97') +
+    tm_borders(col='grey80', alpha = 0.4) +
+    tm_shape(costa_uruguay.incompleteness) +
+    tm_fill(col = 'slope', title = 'Incompleteness',
+            palette = '-RdYlBu', 
+            legend.reverse = T,
+            n = 5, style='jenks',
+            textNA = "No data",
+            colorNA = "grey80") +
+    tm_shape(costa_uruguay) +
     tm_borders(col='grey60', alpha = 0.4) +
-    tm_shape(costa_uruguay.incompleteness %>% select(grilla=gridID, NR, SR, carpobrotus, slope)) +
-    tm_fill(col = 'carpobrotus', palette = 'Greens', n = 6, style='jenks') 
+    tm_layout(scale = 2, legend.show = T, legend.position = c('left', 'top'))
+
+totalrecords.tmap <- tm_graticules(alpha = 0.3) +
+    tm_shape(uruguay, bbox = costa_entera_uruguay) +
+    tm_fill(col='grey97') +
+    tm_borders(col='grey80', alpha = 0.4) +
+    tm_shape(costa_uruguay.incompleteness %>% 
+                 mutate(NR=ifelse(NR==0, NA, NR))) +
+    tm_fill(col = 'NR', title = 'Total number of records',
+            palette = 'Greens', 
+            legend.reverse = T,
+            n = 6, style='jenks',
+            textNA = "0", 
+            colorNA = "grey80") +
+    tm_shape(costa_uruguay) +
+    tm_borders(col='grey60', alpha = 0.4) +
+    tm_layout(scale = 2, legend.show = T, legend.position = c('left', 'top'))  
+
+carpobrtous.tmap <- tm_graticules(alpha = 0.3) +
+    tm_shape(uruguay, bbox = costa_entera_uruguay) +
+    tm_fill(col='grey97') +
+    tm_borders(col='grey80', alpha = 0.4) +
+    tm_shape(costa_uruguay.incompleteness %>% 
+                 mutate(carpobrotus=ifelse(carpobrotus==0, NA, carpobrotus))) +
+    tm_fill(col = 'carpobrotus', title = 'Number of C. edulis records',
+            palette = 'Greens', 
+            legend.reverse = T,
+            n = 6, style='jenks',
+            textNA = "0", 
+            colorNA = "grey80") +
+    tm_shape(costa_uruguay) +
+    tm_borders(col='grey60', alpha = 0.4) +
+    tm_layout(scale = 2, legend.show = T, legend.position = c('left', 'top'))
+
+tmap_save(totalrecords.tmap, 'figs/totalrecords.tmap.svg')
+tmap_save(carpobrtous.tmap, 'figs/carpobrtous.tmap.svg')
+tmap_save(sac.tmap, 'figs/sac.tmap.svg')
 ```
 
 #### Correlaciones
@@ -580,8 +740,73 @@ incompleteness.caprobrotus <- tabla.final %>% filter(carpobrotus>0) %>%
     theme_bw()
 
 nr.caprobrotus / incompleteness.caprobrotus
+
+ggsave(nr.caprobrotus | incompleteness.caprobrotus, filename='figs/correlation.plot.svg', device = 'svg', width=9.2, height=5.2, dpi=300)
+
 ```
   
+  
+#### Correlaciones espaciales
+
+
+```{r}
+#| label: correlaciones-espaciales
+#| echo: true
+#| eval: true
+#| message: false
+#| warning: false
+#| fig-height: 8
+
+library(SpatialPack)
+
+XY_costa_uruguay.incompleteness <- st_centroid(costa_uruguay.incompleteness) %>%
+                                                 st_coordinates() %>% as_tibble()
+
+
+costa_uruguay.incompleteness.cor <- modified.ttest(costa_uruguay.incompleteness$NR,
+                                 costa_uruguay.incompleteness$carpobrotus,
+                                 XY_costa_uruguay.incompleteness)
+
+CORR_NR <- tibble(Cor = 'total number of records vs records of C. edulis',
+               R = costa_uruguay.incompleteness.cor$corr,
+               p.value = costa_uruguay.incompleteness.cor$p.value,
+               Fstat = costa_uruguay.incompleteness.cor$Fstat,
+               dof = costa_uruguay.incompleteness.cor$dof)
+
+CORR_NR %>% 
+  kable(digits = 3)
+
+
+demografia_hogares <- readRDS('data/demografia_hogares.rds')
+
+pop_por_grilla <- st_join(costa_uruguay_grillas, demografia_hogares) %>% 
+    group_by(gridID) %>%
+    summarise(pop=sum(h_tot, na.rm = T)) %>% 
+    st_cast()
+
+pop_por_grilla.cor <- modified.ttest(costa_uruguay.incompleteness$NR,
+                                 pop_por_grilla$pop,
+                                 XY_costa_uruguay.incompleteness)
+
+CORR_POP <- tibble(Cor = 'number of people vs records of C. edulis',
+               R = pop_por_grilla.cor$corr,
+               p.value = pop_por_grilla.cor$p.value,
+               Fstat = pop_por_grilla.cor$Fstat,
+               dof = pop_por_grilla.cor$dof)
+
+CORR_POP %>% 
+  kable(digits = 3)
+
+
+tm_graticules(alpha = 0.3) +
+  tm_shape(pop_por_grilla) + 
+  tm_fill(col='pop', n = 6, style='jenks', title='Population') +
+  tm_shape(costa_uruguay) +
+  tm_borders(col='grey60', alpha = 0.4)
+
+```
+
+
 ### Tabla final
 
 La tabla final de datos con información por grilla:  
