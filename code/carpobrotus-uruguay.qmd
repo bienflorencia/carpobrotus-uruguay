@@ -172,7 +172,7 @@ mapa.carpobrotus <- tm_graticules(alpha = 0.3) +
     tm_shape(costa_uruguay) +
     tm_fill(col='grey90') +
     tm_borders(col='grey60', alpha = 0.4) +
-    tm_shape(areas_protegidas_costa) +
+    tm_shape(st_intersection(areas_protegidas_costa, uruguay)) +
     tm_fill('darkgreen', alpha = 0.4) +
     tm_shape(localidades_costa %>% filter(AREA>5000000)) +
     tm_fill(col='blue', alpha = 0.4) +
@@ -290,6 +290,7 @@ season.n.plot <- datos_carpobrotus %>%
 timeline.plot / (season.year.plot | season.n.plot)
 
 ggsave(timeline.plot, filename='figs/timeline.plot.svg', device = 'svg', width=6, height=3, dpi=300)
+ggsave(season.n.plot, filename='figs/season.n.plot.svg', device = 'svg', width=3, height=3, dpi=300)
 ```
 
 ## Análisis de las fotografías de *Carpobrotus edulis*
@@ -390,17 +391,26 @@ photo_evaluation_carpobrotus %>%
   rename(Phenology=phenology, N=count, `%`=freq) %>%
   kable()
 
-photo_evaluation_carpobrotus %>% filter(!phenology %in% c('flower budding', 'flowering/fruiting' )) %>% 
+phenology.plot <- photo_evaluation_carpobrotus %>% 
+  filter(!phenology %in% c('flower budding', 'flowering/fruiting' )) %>% 
   add_count(phenology, month=(month(observed_on)), 
             name='records_per_month') %>% 
   ggplot(., aes(x=(month), #strftime(observed_on, format="%b"),
                 y=records_per_month,
                 col=phenology)) +
-  geom_line(size=2, show.legend = F) +
-  scale_color_brewer(palette='Set2') + scale_x_continuous(breaks= c(1,2,3,4,5,6,7,8,9,10,11,12))+
-  facet_wrap(~phenology, scales = 'free_y') +
+  geom_line(size=2) +
+  scale_color_brewer(palette='Set2') + 
+  scale_x_continuous(breaks= c(1,2,3,4,5,6,7,8,9,10,11,12),
+                     labels = c('Jan', 'Feb', 'Mar',
+                                'Apr','May','Jun','Jul',
+                                'Aug','Sep','Oct','Nov','Dec'))+
+  #facet_wrap(~phenology, scales = 'free_y') +
   theme_bw() +
-  labs(x='Months', y= 'Number of records')
+  labs(x='Months', y= 'Number of records', col='Phenology')
+
+phenology.plot
+
+ggsave(phenology.plot, filename='figs/phenology.plot.svg', device = 'svg', width=7.2, height=5.2, dpi=300)
 ```
 
 
