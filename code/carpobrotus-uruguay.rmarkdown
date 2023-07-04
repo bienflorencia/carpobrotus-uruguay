@@ -13,6 +13,7 @@ author: 'Florencia Grattarola'
 date: '`r format(Sys.time(), "%Y-%m-%d")`'
 ---
 
+
 ## Descarga de datos de *Carpobrotus edulis*
 
 Para descargar datos de NaturalistaUY usé la [API de iNaturalist](https://api.inaturalist.org/v1/docs/). Los datos se descargan considerando:
@@ -20,6 +21,7 @@ Para descargar datos de NaturalistaUY usé la [API de iNaturalist](https://api.i
   - Uruguay como localización: `place_id=7259`
   - Carpobrotus edulis como taxón: `taxon_id=49322`
   - Registros con Grado de Investigación: `quality_grade=research`
+
 
 ```{r}
 #| message: false
@@ -76,6 +78,7 @@ datos_carpobrotus <- getCarpobrotusObservations(place_id=7259,
 datos_carpobrotus <- datos_carpobrotus %>% filter(created_at<='2023-06-09')
 ```
 
+
 ::: {.callout-note}
 ## Fecha de descarga
 
@@ -89,6 +92,7 @@ Resumen de los datos de *Carpobrotus edulis* disponibles.
 ### Distribución espacial
 
 Para descargar los mapas usé el paquete `geouy`, haciendo: `geouy::load_geouy('Dptos')`. Guardé este objeto para evitar descargarlo nuevamente. El archivo tiene como CRS `EPSG:32721`.
+
 
 ```{r}
 #| label: mapa
@@ -176,7 +180,9 @@ tmap_save(mapa.carpobrotus, 'figs/mapa.carpobrotus.svg')
 ```
 
 
+
 #### Datos por departamento
+
 
 ```{r}
 #| label: departmentos
@@ -193,7 +199,9 @@ datos_carpobrotus %>%
   kable()
 ```
 
+
 #### Datos en Áreas Protegidas
+
 
 ```{r}
 #| label: areasprotegidas
@@ -221,6 +229,7 @@ mapa.carpobrotus.areas_protegidas <-  tm_graticules(alpha = 0.3) +
 
 mapa.carpobrotus.areas_protegidas
 ```
+
   
 ### Cobertura temporal
 
@@ -229,6 +238,7 @@ Un total de **`r length(unique(datos_carpobrotus$user.id))`** usuaries tomaron *
 
   - Estacionalidad
   
+
 ```{r}
 #| label: estaciones
 #| echo: true
@@ -284,12 +294,14 @@ timeline.plot / (season.year.plot | season.n.plot)
 ggsave(timeline.plot, filename='figs/timeline.plot.svg', device = 'svg', width=6, height=3, dpi=300)
 ```
 
+
 ## Análisis de las fotografías de *Carpobrotus edulis*
 
   - **Densidad**: high, medium, low
   - **Fenología**: no evidence of flowering/fruiting, flowering, flower budding , fruiting, flowering/flower budding, flowering/fruiting 
   - **Presencia de infraestructura humana**: present, absent
   
+
 ```{r}
 #| label: photo-analysis
 #| message: false
@@ -318,7 +330,9 @@ sf_photo_evaluation_carpobrotus <- photo_evaluation_carpobrotus %>%
 
 ```
 
+
 ### Densidad
+
 
 ```{r}
 #| label: photo-analysis-density
@@ -367,7 +381,9 @@ tm_graticules(alpha = 0.3) +
 ```
 
 
+
 ### Fenología
+
 
 ```{r}
 #| label: photo-analysis-phenology
@@ -397,7 +413,9 @@ photo_evaluation_carpobrotus %>% filter(!phenology %in% c('flower budding', 'flo
 
 
 
+
 ### Infraestructura
+
 
 ```{r}
 #| label: photo-analysis-infrastructure
@@ -426,6 +444,7 @@ tm_graticules(alpha = 0.3) +
 
 
 
+
 ## Descarga de todos los datos en NaturalistaUY para Montevideo, Canelones, Maldonado y Rocha
 
 Usamos:
@@ -441,6 +460,7 @@ Dado que la API no permite descargar más de 10,0000 datos, estos datos los desc
 
 9 de junio, 2023
 :::
+
 
 ```{r}
 #| label: all.data
@@ -470,10 +490,12 @@ allObservations_sf <- allObservations %>%
 ```
 
 
+
 ## Análisis espacial
 
   - Creación de grillas para los cuatro departamentos de la costa (10x10km)
   
+
 ```{r}
 #| label: grillas
 #| echo: true
@@ -487,7 +509,9 @@ costa_uruguay_grillas <- st_make_grid(st_union(costa_uruguay), 10000) %>%
   st_make_valid() %>% st_cast() 
 ```
 
+
 ### Intersección de grillas con datos totales y para *Caprobrotus edulis*  
+
 
 ```{r}
 #| label: join-grillas
@@ -511,6 +535,7 @@ grillas_carpobrotus <- st_join(costa_uruguay_grillas, sf_carpobrotus) %>%
 
 ```
 
+
 ### Estimación del esfuerzo de muestreo por grilla
 
 Usamos la función `get_gridsSlopes()` generada para análisis de Biodiversidata ([Grattarola et al. 2020](https://doi.org/10.1038/s41598-020-79074-8)). 
@@ -523,6 +548,7 @@ El código está disponible en GitHub: [Multiple forms of hotspots of tetrapod b
 > To identify the areas of ignorance we quantified the levels of inventory incompleteness for each group by using curvilinearity of smoothed species accumulation curves (SACs). This method assumes that SACs of poorly sampled grids tend towards a straight line, while those of better sampled ones have a higher degree of curvature. As a proxy for inventory incompleteness we calculated the degree of curvilinearity as the mean slope of the last 10% of SACs.
 
 :::
+
 
 
 ```{r}
@@ -571,8 +597,10 @@ allObservations.SACs <- grillas_allObservations %>% as_tibble() %>%
 allObservations.incompleteness <- get_gridsSlopes(allObservations.SACs)
 ```
 
+
 Unión espacial de todas los datos por grilla: número de registros totales, número de especies totales, curva de incompleteness (esfuerzo de muestreo), y número de registros de *Carpobrotus edulis*.
   
+
 ```{r}
 #| label: union-espacial-grillas
 #| echo: true
@@ -587,10 +615,12 @@ costa_uruguay.incompleteness <- left_join(grillas_allObservations,
               st_drop_geometry())
 ```
 
+
 ### Sesgos de muestreo
 
 #### Mapas
   
+
 
 ```{r}
 #| label: incompleteness-plots-view
@@ -702,7 +732,9 @@ tmap_save(carpobrtous.tmap, 'figs/carpobrtous.tmap.svg')
 tmap_save(sac.tmap, 'figs/sac.tmap.svg')
 ```
 
+
 #### Correlaciones
+
 
 ```{r}
 #| label: correlaciones
@@ -744,9 +776,11 @@ nr.caprobrotus / incompleteness.caprobrotus
 ggsave(nr.caprobrotus | incompleteness.caprobrotus, filename='figs/correlation.plot.svg', device = 'svg', width=9.2, height=5.2, dpi=300)
 
 ```
+
   
   
 #### Correlaciones espaciales
+
 
 
 ```{r}
@@ -807,6 +841,7 @@ tm_graticules(alpha = 0.3) +
 ```
 
 
+
 ### Tabla final
 
 La tabla final de datos con información por grilla:  
@@ -814,6 +849,7 @@ La tabla final de datos con información por grilla:
   - **Núm de especies totales**: cantidad de especies en NaturalistaUY    
   - **Núm de registros Carpobrotus**: cantidad de registros en NaturalistaUY de *Carpobrotus edulis*  
   - **Incompleteness**: medida de esfuerzo de muestreo (valores cercanos a 0 indican grillas completas)  
+
 
 ```{r}
 #| label: tabla-final
@@ -829,3 +865,4 @@ tabla.final %>% filter(carpobrotus>0) %>% arrange(slope) %>%
          Incompleteness=slope) %>% 
   kable(digits = 3)
 ```
+
