@@ -376,21 +376,26 @@ photo_evaluation_carpobrotus %>%
   kable()
 
 phenology.plot <- photo_evaluation_carpobrotus %>% 
-  filter(!phenology %in% c('flower budding', 'flowering/fruiting' )) %>% 
-  add_count(phenology, month=(month(observed_on)), 
-            name='records_per_month') %>% 
-  ggplot(., aes(x=(month), #strftime(observed_on, format="%b"),
-                y=records_per_month,
-                col=phenology)) +
-  geom_line(size=2) +
-  scale_color_brewer(palette='Set2') + 
-  scale_x_continuous(breaks= c(1,2,3,4,5,6,7,8,9,10,11,12),
-                     labels = c('Jan', 'Feb', 'Mar',
-                                'Apr','May','Jun','Jul',
-                                'Aug','Sep','Oct','Nov','Dec'))+
-  #facet_wrap(~phenology, scales = 'free_y') +
-  theme_bw() +
-  labs(x='Months', y= 'Number of records', col='Phenology')
+    filter(!phenology %in% c('flower budding', 'flowering/fruiting' )) %>% 
+    add_count(phenology, month=(month(observed_on)), 
+              name='records_per_month') %>% 
+    select(month, records_per_month, phenology) %>% 
+    group_by(month) %>% distinct(phenology,.keep_all = T) %>% 
+    mutate(total_phenology_per_month=sum(records_per_month)) %>% ungroup() %>% 
+    mutate(percentage=records_per_month*100/total_phenology_per_month) %>% 
+    complete(month, phenology, fill = list(percentage = 0)) %>% 
+    ggplot(., aes(x=(month), #strftime(observed_on, format="%b"),
+                  y=percentage,
+                  col=phenology)) +
+    geom_line(size=2) +
+    scale_color_brewer(palette='Set2') + 
+    scale_x_continuous(breaks= c(1,2,3,4,5,6,7,8,9,10,11,12),
+                       labels = c('Jan', 'Feb', 'Mar',
+                                  'Apr','May','Jun','Jul',
+                                  'Aug','Sep','Oct','Nov','Dec'))+
+    scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+    theme_bw() +
+    labs(x='Months', y= '% of records', col='Phenology')
 
 phenology.plot
 
@@ -493,8 +498,8 @@ coef <- 100
 double_temporal_plot <- ggplot(data=all_records_time %>% filter(observed_on<'2022-12-31'),
                                aes(x=observed_on)) +
   geom_line(aes(y=carpobrotus_records_per_year, col='Carpobrotus'), size=1) +
-  geom_line(aes(y=all_records_per_year/coef, col='Plantae'), size=1) +
-  scale_y_continuous(name = expression(paste('Number of', italic('Carpobrotus edulis'), 'records')),
+  geom_line(aes(y=all_records_per_year/coef, col='Plantae'), size=1, show.legend = F) +
+  scale_y_continuous(name = expression(paste('Number of ', italic('Carpobrotus edulis'), ' records')),
                      sec.axis = sec_axis(~.*coef,
                                          name= 'Number of Plant records')) +
   scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
@@ -502,7 +507,7 @@ double_temporal_plot <- ggplot(data=all_records_time %>% filter(observed_on<'202
 
 double_temporal_plot
 
-ggsave(double_temporal_plot, filename='figs/double.temporal.plot.svg', device = 'svg', dpi=300)
+ggsave(double_temporal_plot, filename='figs/double.temporal.plot.svg', device = 'svg',  width=6, height=3, dpi=300)
 ```
 
 ### Spatial analyses
@@ -872,4 +877,17 @@ tabla.final %>% filter(carpobrotus>0) %>% arrange(slope) %>%
          `Carpobrotus record`=carpobrotus, 
          Incompleteness=slope) %>% 
   kable(digits = 3)
+```
+
+
+## Final dataset
+
+```{r}
+datos_carpobrotus %>% mutate(country='Uruguay') %>% 
+  select(species=taxon.name, 
+         `URL`=uri, 
+         `geographic area`=stateProvince, 
+         country, 
+         `observed on`=observed_on) %>% 
+  kable()
 ```
