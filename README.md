@@ -1,7 +1,7 @@
 # Status of the invasion of Carpobrotus edulis in Uruguay based on community science records
 *Florencia Grattarola, Lucía Rodríguez-Tricot, Matías Zarucki & Gabriel Laufer*.
 
-This repository includes the data and code for analysing the records of *Carpobrotus edulis* on NaturalistaUY (the iNaturalist site in Uruguay). The data download was automated through the iNautralist API.
+This repository ([github.com/bienflorencia/carpobrotus-uruguay](https://github.com/bienflorencia/carpobrotus-uruguay)) includes the data and code for analysing the records of *Carpobrotus edulis* on NaturalistaUY (the iNaturalist site in Uruguay). The data download was automated through the iNautralist API, and can be found here: [datos_carpobrotus.csv](https://github.com/bienflorencia/carpobrotus-uruguay/blob/main/data/datos_carpobrotus.csv)
 
 **Explore the manuscript's [Supplementary Information](https://bienflorencia.github.io/carpobrotus-uruguay/code/carpobrotus-uruguay-en.html)**.
 
